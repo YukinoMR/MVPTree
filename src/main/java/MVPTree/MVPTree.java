@@ -2,10 +2,7 @@ package MVPTree;
 
 import entity.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.EmptyStackException;
-import java.util.List;
+import java.util.*;
 
 import static java.lang.Float.isNaN;
 
@@ -23,6 +20,7 @@ public class MVPTree {
     private Node node;
     private static CmpFunc distance;
     private int nbresults;
+    public MVPError error;
 
 
     public static final int HEADER_SIZE = 32;
@@ -49,11 +47,6 @@ public class MVPTree {
         this.distance = distance;
     }
 
-    public MVPDP dpAlloc(MVPDataType type) {
-        MVPDP newdp = new MVPDP();
-        newdp.setType(type);
-        return newdp;
-    }
 
     //create leaf node
     private static LeafNode createLeaf(int leafcap) {
@@ -70,8 +63,9 @@ public class MVPTree {
         return new InternalNode(NodeType.INTERNAL, null,null, m1, m2, child);
     }
     //find the advantage points
-    private static List<Integer> selectVantagePoints(List<MVPDP> points, int nb) {
+    private static List<Integer> selectVantagePoints(List<MVPDP> points) {
 
+        int nb = points.size();
         int sv1_pos = (nb >= 1) ? 0 : -1;
         int sv2_pos = -1;
 
@@ -110,7 +104,7 @@ public class MVPTree {
             }
         }
 
-        int min_pos;
+        int min_pos = -1;
         for (int i = 0; i < nb - 1; i++) {
             min_pos = i;
             for (int j = i + 1; j < nb; j++) {
@@ -134,7 +128,7 @@ public class MVPTree {
             if (index >= nb) {
                 index = nb - 1;
             }
-            M.set(i,dist[index]);
+            M.add(dist[index]);
         }
 
         return 0;
@@ -143,52 +137,37 @@ public class MVPTree {
     /* Sort points into bins by distance(points[i], dp) for each i in list, skipping
      * points[sv1_pos] and points[sv2_pos]. Use pivot[LengthM1] array as pivot points
      * to determine which bins. */
-    public List<List<MVPDP>> sortPoints(List<MVPDP> points, int nbpoints, int sv1_pos, int sv2_pos, MVPDP vp, List<Integer> counts, List<Float> pivots) {
-        if (points == null || vp == null || counts == null || pivots == null || nbpoints == 0) {
+    public List<List<MVPDP>> sortPoints(List<MVPDP> points, int sv1_pos, int sv2_pos, MVPDP vp, List<Float> pivots, int lvl) {
+        if (points == null || vp == null || pivots == null) {
             return null;
         }
+
+
+        if(sv1_pos >= 0) {points.remove(sv1_pos);}
+        if(sv2_pos >= 0) {points.remove(sv2_pos - 1);}
+        int nbpoints = points.size();
+
+        points.sort(new Comparator<MVPDP>() {
+            @Override
+            public int compare(MVPDP mvpdp1, MVPDP mvpdp2) {
+                return Integer.compare(mvpdp1.getPath().get(lvl).intValue(),mvpdp2.getPath().get(lvl).intValue());
+            }
+        });
 
         int bf = this.getbranchFactor();
         int lengthM1 = bf - 1;
 
         List<List<MVPDP>> bins = new ArrayList<>(bf);
-
-        counts = new ArrayList<>(bf);
-
-        for (int i = 0; i < bf; i++) {
-            List<MVPDP> bin = new ArrayList<>(nbpoints);
-            bins.set(i, bin) ;
-            if (bins.get(i) == null) {
-                return null;
-            }
+        for(int i = 0 ; i < bf; i++){
+            bins.add(new ArrayList<>());
         }
 
-        for (int i = 0; i < nbpoints; i++) {
-            if (i == sv1_pos || i == sv2_pos) {
-                continue;
-            }
+        for(int i = 0; i < nbpoints; i++){
+            bins.get(i * bf / nbpoints).add(points.get(i));
+        }
 
-            float d = distance.compare(vp, points.get(i));
-            if (isNaN(d) || d < 0.0f) {
-                return null;
-            }
-
-            for (int k = 0; k < lengthM1; k++) {
-                if (d <= pivots.get(k)) {
-                    List<MVPDP> bin = bins.get(k);
-                    bin.set(counts.get(k), points.get(i));
-                    bins.set(k, bin);
-                    counts.set(k,  counts.get(k) + 1);
-                    break;
-                }
-            }
-
-            if (d > pivots.get(lengthM1 - 1)) {
-                List<MVPDP> bin = bins.get(lengthM1);
-                bin.set(counts.get(lengthM1), points.get(i));
-                bins.set(lengthM1, bin);
-                counts.set(lengthM1, counts.get(lengthM1) + 1);
-            }
+        for(int i = 1 ; i < bf; i++){
+            pivots.add(bins.get(i).get(0).getPath().get(lvl));
         }
 
         return bins;
@@ -196,29 +175,31 @@ public class MVPTree {
 
     /* Calculate distances for all points from given vantage point, vp, and
    assign that distance into each points path using the lvl parameter. */
-    public int findDistanceRangeForVP(List<MVPDP> points, int nbPoints, MVPDP vp, int lvl) {
-        if (points == null || nbPoints == 0 || vp == null ) {
+    public int findDistanceRangeForVP(List<MVPDP> points,  MVPDP vp, int lvl) {
+        if (points == null || vp == null ) {
             return -1;
         }
+        int nbPoints = points.size();
 
         int error = 0;
-        for (int i = 0; i < nbPoints; i++) {
-            float d = distance.compare(vp, points.get(i));
+        for (MVPDP point : points) {
+            float d = distance.compare(vp, point);
             if (Float.isNaN(d) || d < 0.0f) {
                 return -2;
             }
             if (lvl < this.pathLength) {
-                points.get(i).setPath(lvl, d);
+                point.setPath(lvl, d);
             }
         }
 
         return error;
     }
 
-    public Node addNode(Node node, List<MVPDP> points, int nbpoints, MVPError error, int lvl){
+    public Node addNode(Node node, List<MVPDP> points, int lvl){
+        int nbpoints = points.size();
         Node newnode = node;
         if (nbpoints == 0) { return newnode; }
-        if (lvl < 0 || points == null) {
+        if (lvl < 0) {
         error = MVPError.MVP_ARGERR;
             return null;
         }
@@ -229,13 +210,9 @@ public class MVPTree {
             int sv2_pos;
             if(nbpoints <= this.leafCapacity + 2){
                 newnode = createLeaf(this.leafCapacity);
-                if(newnode == null){
-                    error = MVPError.MVP_NOLEAF;
-                    return null;
-                }
 
                 List<Integer> sv = new ArrayList<>(2);
-                if ((sv = selectVantagePoints(points, nbpoints)) == null) {
+                if ((sv = selectVantagePoints(points)) == null) {
                     error = MVPError.MVP_VPNOSELECT;
                     return null;
                 }
@@ -244,75 +221,69 @@ public class MVPTree {
                 ((LeafNode) newnode).setSv1((sv1_pos >= 0) ? points.get(sv1_pos) : null);
                 ((LeafNode) newnode).setSv2((sv2_pos >= 0) ? points.get(sv2_pos) : null);
 
-                if (findDistanceRangeForVP(points, nbpoints, ((LeafNode) newnode).getSv1(), lvl) < 0) {
+                if (findDistanceRangeForVP(points,((LeafNode) newnode).getSv1(), lvl) < 0) {
                     error = MVPError.MVP_NOSV1RANGE;
                     return null;
                 }
 
-                if (((LeafNode) newnode).getSv2() != null) {
-                    if (findDistanceRangeForVP(points, nbpoints, ((LeafNode) newnode).getSv2(), lvl + 1) < 0) {
+//                if (((LeafNode) newnode).getSv2() != null) {
+                    if (findDistanceRangeForVP(points,((LeafNode) newnode).getSv2(), lvl + 1) < 0) {
                         error = MVPError.MVP_NOSV2RANGE;
                         return null;
                     }
-                }
-                int count = 0;
+//                }
                 for (int i = 0; i < nbpoints; i++) {
                     if (i == sv1_pos || i == sv2_pos) {
                         continue;
                     }
-                    ((LeafNode) newnode).getD1().set(count, distance.compare(points.get(i), ((LeafNode) newnode).getSv1()));
-                    ((LeafNode) newnode).getD2().set(count, distance.compare(points.get(i), ((LeafNode) newnode).getSv2()));
-                    ((LeafNode) newnode).getPoints().set(count++, points.get(i));
+                    ((LeafNode) newnode).getD1().add(distance.compare(points.get(i), ((LeafNode) newnode).getSv1()));
+                    ((LeafNode) newnode).getD2().add(distance.compare(points.get(i), ((LeafNode) newnode).getSv2()));
+                    ((LeafNode) newnode).getPoints().add( points.get(i));
                 }
-                ((LeafNode) newnode).setNbPoints(count);
+                ((LeafNode) newnode).setNbPoints(((LeafNode) newnode).getPoints().size());
             }
             else {
-                newnode = createInternal(this.getBranchFactor());
-                if(newnode == null){
-                    error = MVPError.MVP_NOINTERNAL;
-                    return null;
-                }
-                List<Integer> pos = selectVantagePoints(points, nbpoints);
+                newnode = createInternal(branchFactor);
+                List<Integer> pos = selectVantagePoints(points);
                 if(pos == null){
                     error = MVPError.MVP_VPNOSELECT;
                     return null;
                 }
-                ((InternalNode) newnode).setSv1(points.get(pos.get(0)));
-                ((InternalNode) newnode).setSv2(points.get(pos.get(1)));
+                if(pos.get(0) >= 0) ((InternalNode) newnode).setSv1(points.get(pos.get(0)));
+                if(pos.get(1) >= 0) ((InternalNode) newnode).setSv2(points.get(pos.get(1)));
 
-                if(findDistanceRangeForVP(points, nbpoints,((InternalNode) newnode).getSv1(),lvl) < 0){
+                if(findDistanceRangeForVP(points, ((InternalNode) newnode).getSv1(),lvl) < 0){
                     error = MVPError.MVP_NOSV1RANGE;
                     return null;
                 }
 
-                if(findSplits(points, nbpoints, ((InternalNode) newnode).getSv1(),((InternalNode) newnode).getM1(),lengthM1) < 0){
-                    error = MVPError.MVP_NOSPLITS;
-                    return null;
-                }
 
                 int i,j;
                 List<Integer> binlengths = new ArrayList<>();
-                List<List<MVPDP>> bins = sortPoints(points, nbpoints, pos.get(0), pos.get(1),((InternalNode) newnode).getSv1(),binlengths,((InternalNode) newnode).getM1());
+                List<List<MVPDP>> bins = sortPoints(points,pos.get(0), pos.get(1),((InternalNode) newnode).getSv1(),((InternalNode) newnode).getM1(), lvl);
                 if(bins == null){
                     error = MVPError.MVP_NOSORT;
                     return null;
                 }
                 for(i = 0; i < branchFactor; i++){
-                    if(findDistanceRangeForVP(bins.get(i), binlengths.get(i), ((InternalNode) newnode).getSv2(),lvl + 1) < 0){
+//                    if(binlengths.get(i) == 0){
+//                        ((InternalNode) newnode).getChildNodes().add(null);
+//                    }
+                    if(findDistanceRangeForVP(bins.get(i),  ((InternalNode) newnode).getSv2(),lvl + 1) < 0){
                         error = MVPError.MVP_NOSV2RANGE;
                         return null;
                     }
-                    if(findSplits(bins.get(i), binlengths.get(i), ((InternalNode) newnode).getSv2(),((InternalNode) newnode).getM2().subList(i * lengthM1,((InternalNode) newnode).getM2().size()), lengthM1) < 0){
-                        error = MVPError.MVP_NOSPLITS;
-                        return null;
-                    }
+//                    if(findSplits(bins.get(i), binlengths.get(i), ((InternalNode) newnode).getSv2(),((InternalNode) newnode).getM2(), lengthM1) < 0){
+//                        error = MVPError.MVP_NOSPLITS;
+////                        return null;
+//                        continue;
+//                    }
 
-                    List<Integer> bin2lengths = new ArrayList<>();
-                    List<List<MVPDP>> bins2 = sortPoints(bins.get(i), bin2lengths.get(i),-1, -1, ((InternalNode) newnode).getSv2(),bin2lengths,((InternalNode) newnode).getM2().subList(i * lengthM1,((InternalNode) newnode).getM2().size()));
+                    List<List<MVPDP>> bins2 = sortPoints(bins.get(i),-1, -1, ((InternalNode) newnode).getSv2(),((InternalNode) newnode).getM2(), lvl + 1);
 
                     for(j = 0; j < branchFactor; j++){
-                        Node child = addNode(null, bins2.get(j), bin2lengths.get(j), error, lvl = 2);
-                        ((InternalNode) newnode).getChildNodes().set(i * branchFactor + j,child);
+                        Node child = addNode(null, bins2.get(j),  lvl + 2);
+                        ((InternalNode) newnode).getChildNodes().add(i * branchFactor + j,child);
                     }
                 }
             }
@@ -320,7 +291,7 @@ public class MVPTree {
         else {
             if(newnode.getType() == NodeType.LEAF){
                 if(((LeafNode) newnode).getNbPoints() + nbpoints <= leafCapacity){
-                    if(findDistanceRangeForVP(points, nbpoints, ((LeafNode) newnode).getSv1(),lvl)< 0){
+                    if(findDistanceRangeForVP(points, ((LeafNode) newnode).getSv1(),lvl)< 0){
                         error = MVPError.MVP_NOSV1RANGE;
                         return newnode;
                     }
@@ -330,7 +301,7 @@ public class MVPTree {
                         ((LeafNode) newnode).setSv2(points.get(0));
                         pos = 1;
                     }
-                    if(findDistanceRangeForVP(points, nbpoints,((LeafNode) newnode).getSv2(), lvl + 1) < 0){
+                    if(findDistanceRangeForVP(points, ((LeafNode) newnode).getSv2(), lvl + 1) < 0){
                         error = MVPError.MVP_NOSV2RANGE;
                         return newnode;
                     }
@@ -362,32 +333,29 @@ public class MVPTree {
                     for(i = 0; i < nbpoints; i++){
                         tmppts.set(index++, points.get(i));
                     }
-                    newnode = addNode(null, tmppts, newnb, error,lvl);
+                    newnode = addNode(null, tmppts,  lvl);
                 }
             }
             else{
-                if(findDistanceRangeForVP(points, nbpoints, ((InternalNode) newnode).getSv1(),lvl) < 0){
+                if(findDistanceRangeForVP(points, ((InternalNode) newnode).getSv1(),lvl) < 0){
                     error = MVPError.MVP_NOSV1RANGE;
                     return newnode;
                 }
 
-                List<Integer> binlengths = null;
-                List<List<MVPDP>> bins = sortPoints(points, nbpoints, -1, -1, ((InternalNode) newnode).getSv1(),binlengths,((InternalNode) newnode).getM1());
+
+                List<List<MVPDP>> bins = sortPoints(points, -1, -1, ((InternalNode) newnode).getSv1(),((InternalNode) newnode).getM1(), lvl);
                 for(int i = 0; i < branchFactor; i++){
-                    if(binlengths.get(i) <= 0){
-                        continue;
-                    }
                     int j;
-                    if(findDistanceRangeForVP(bins.get(i), binlengths.get(i),((InternalNode) newnode).getSv2(),lvl + 1)< 0){
+                    if(findDistanceRangeForVP(bins.get(i),((InternalNode) newnode).getSv2(),lvl + 1)< 0){
                         error = MVPError.MVP_NOSV2RANGE;
                         return newnode;
                     }
 
                     List<Integer> bin2lengths = new ArrayList<>();
-                    List<List<MVPDP>> bins2 = sortPoints(bins.get(i), binlengths.get(i), -1, -1, ((InternalNode) newnode).getSv2(),bin2lengths, ((InternalNode) newnode).getM2().subList(i * lengthM1, ((InternalNode) newnode).getM2().size() ));
+                    List<List<MVPDP>> bins2 = sortPoints(bins.get(i), -1, -1, ((InternalNode) newnode).getSv2(),((InternalNode) newnode).getM2(), lvl + 1);
                     for(j = 0; j < branchFactor; j++){
                         Node child;
-                        child = addNode((Node) ((InternalNode) newnode).getChildNodes().get(i * branchFactor + j),bins2.get(j),bin2lengths.get(j),error, lvl + 2);
+                        child = addNode((Node) ((InternalNode) newnode).getChildNodes().get(i * branchFactor + j),bins2.get(j), lvl + 2);
                         ((InternalNode) newnode).getChildNodes().set(i * branchFactor + j, child);
                         if(error != MVPError.MVP_SUCCESS)break;
                     }
@@ -408,7 +376,7 @@ public class MVPTree {
             for(int i = 0; i < nbpoints; i++){
                 points.get(i).setPath(new ArrayList<>(pathLength));
             }
-            node = addNode(node,points,nbpoints,err,0);
+            node = addNode(node,points,0);
         }
         else{
             err = MVPError.MVP_ARGERR;
@@ -510,7 +478,7 @@ public class MVPTree {
                     }
                     /* check >= last 2nd level bin  */
                     if(d2 + radius >= ((InternalNode) node).getM2().get(i * lengthM1 + lengthM1 - 1)){
-                        err = retrieve((Node) ((InternalNode) node).getChildNodes().get(i * bf + lengthM1),target,radius,results,lvl + 2)
+                        err = retrieve((Node) ((InternalNode) node).getChildNodes().get(i * bf + lengthM1),target,radius,results,lvl + 2);
                     }
                 }
             }
@@ -518,7 +486,7 @@ public class MVPTree {
             if(d1 + radius >= ((InternalNode) node).getM1().get(lengthM1 - 1)){
                 /* check <= each 2nd level bins */
                 for(int j = 0; j < lengthM1; j++){
-                    if(d2 - radius <= ((InternalNode) node).getM2().get(lengthM1 + lengthM1 + j)){
+                    if(d2 - radius <= ((InternalNode) node).getM2().get(lengthM1 * lengthM1 + j)){
                         err = retrieve((Node) ((InternalNode) node).getChildNodes().get(bf * lengthM1 + j),target,radius,results,lvl + 2);
                         if(err != MVPError.MVP_SUCCESS)return err;
                     }
